@@ -24,7 +24,7 @@ namespace MSerra.Net
                 RootName = rootName,
                 OptimisticParsing = true,
                 ParseNumber = true,
-                StringBufferSizeInBytes = 768
+                StringBufferSizeInBytes = 1024 * 8
             };
             this.stringBuffer = new char[this.options.StringBufferSizeInBytes];
         }
@@ -66,12 +66,12 @@ namespace MSerra.Net
 
                 if (reader.EndOfStream) throw new ApplicationException("File is empty or malformed.");
 
-                var value = ReadAlphaNumOrNull(reader, ref currentChar, out noRead);
+                ReadAlphaNumOrNull(reader, ref currentChar, out noRead, out var value);
                 if (error) throw new ApplicationException(errorMessage);
                 if (!noRead)
                 {
                     // We check that there was just a string or number or null and that JSON is not malformed
-                    currentChar = TrimNext(reader);
+                    TrimNext(reader, ref currentChar);
                     if (!reader.EndOfStream) throw new ApplicationException("JSON string is malformed.");
                     response.TryAdd(options.RootName, value);
                     return response;
@@ -91,7 +91,7 @@ namespace MSerra.Net
             {
                 if (currentContext.IsInObject) // Right after the first opening '{'
                 {
-                    var currentField = ReadProperty(reader, ref currentChar);
+                    ReadProperty(reader, ref currentChar, out var currentField);
                     if (error) throw new ApplicationException(errorMessage);
                     if (currentField == null)
                     {
@@ -99,7 +99,7 @@ namespace MSerra.Net
                         return response;
                     }
                     var key = !string.IsNullOrWhiteSpace(currentContext.FieldName) && options.FlattenHierarchy ? $"{currentContext.FieldName}.{currentField}" : currentField;
-                    var value = ReadAlphaNumOrNull(reader, ref currentChar, out noRead);
+                    ReadAlphaNumOrNull(reader, ref currentChar, out noRead, out var value);
                     if (error) throw new ApplicationException(errorMessage);
                     if (!noRead)
                     {
@@ -128,7 +128,7 @@ namespace MSerra.Net
                     if (!reader.EndOfStream && currentChar != ',' && currentChar != '}' && currentChar != ']') throw new ApplicationException("Malformed JSON, bad field value ending.");
                     if (currentChar == '}')
                     {
-                        currentChar = TrimNext(reader);
+                        TrimNext(reader, ref currentChar);
                         currentContext.Closings++;
                         return response;
                     }
@@ -139,7 +139,7 @@ namespace MSerra.Net
                         $"{currentContext.ArrayIndex++}" :
                         (options.FlatArrayNotation == FlatArrayNotation.Indexed ? $"{currentContext.FieldName}[{currentContext.ArrayIndex++}]" : $"{currentContext.FieldName}.{currentContext.ArrayIndex++}");
                     var key = index;
-                    var value = ReadAlphaNumOrNull(reader, ref currentChar, out noRead);
+                    ReadAlphaNumOrNull(reader, ref currentChar, out noRead, out var value);
                     if (error) throw new ApplicationException(errorMessage);
                     if (!noRead)
                     {
@@ -168,7 +168,7 @@ namespace MSerra.Net
                     if (!reader.EndOfStream && currentChar != ',' && currentChar != '}' && currentChar != ']') throw new ApplicationException("Malformed JSON, bad array value ending.");
                     if (currentChar == ']')
                     {
-                        currentChar = TrimNext(reader);
+                        TrimNext(reader, ref currentChar);
                         currentContext.Closings++;
                         return response;
                     }
@@ -179,30 +179,43 @@ namespace MSerra.Net
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private string ReadProperty(StreamReader reader, ref int currentChar)
+        private void ReadProperty(StreamReader reader, ref int currentChar, out string propertyName)
         {
-            currentChar = TrimNext(reader);
-            if (currentChar == '}') return null;
-            if (currentChar != '"') return SetError("Error reading property.");
+            propertyName = string.Empty;
+            TrimNext(reader, ref currentChar);
+            if (currentChar == '}') return;
+            if (currentChar != '"')
+            {
+                SetError("Error reading property.");
+                return;
+            }
             var count = 0;
             do
             {
                 currentChar = reader.Read();
-                if (currentChar != '"' && (currentChar < 'a' || currentChar > 'z') && (currentChar < 'A' || currentChar > 'Z') && (currentChar < '0' || currentChar > '9') && currentChar != '_') return SetError($"Forbidden char detected in a field name : '{currentChar}'");
+                if (currentChar != '"' && (currentChar < 'a' || currentChar > 'z') && (currentChar < 'A' || currentChar > 'Z') && (currentChar < '0' || currentChar > '9') && currentChar != '_')
+                {
+                    SetError($"Forbidden char detected in a field name : '{currentChar}'");
+                    return;
+                }
                 if (currentChar != '"') stringBuffer[count++] = (char)currentChar;
             } while (!reader.EndOfStream && currentChar != '"');
-            currentChar = TrimNext(reader);
-            if (currentChar != ':') return SetError("Malformed JSON field, missing ':'.");
-            return new string(new ReadOnlySpan<char>(stringBuffer, 0, count));
+            TrimNext(reader, ref currentChar);
+            if (currentChar != ':')
+            {
+                SetError("Malformed JSON field, missing ':'.");
+                return;
+            }
+            propertyName = new string(new ReadOnlySpan<char>(stringBuffer, 0, count));
         }
 
         // We expect to encounter a field (i.e. starting with ' or ")
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private object ReadAlphaNumOrNull(StreamReader reader, ref int currentChar, out bool noRead)
+        private void ReadAlphaNumOrNull(StreamReader reader, ref int currentChar, out bool noRead, out object value)
         {
             noRead = true;
-            currentChar = TrimNext(reader);
-            var value = default(object);
+            value = default(object);
+            TrimNext(reader, ref currentChar);
             if (currentChar == '"' || currentChar == '\'')
             {
                 int previousPreviousChar;
@@ -218,7 +231,11 @@ namespace MSerra.Net
                     stringBuffer[count++] = (char)currentChar;
                 }
                 value = new string(new ReadOnlySpan<char>(stringBuffer, 0, count));
-                if (currentChar != stringDelimiter) return SetError($"Malformed string : [{value.ToString()}]");
+                if (currentChar != stringDelimiter)
+                {
+                    SetError($"Malformed string : [{value.ToString()}]");
+                    return;
+                }
                 noRead = false;
                 currentChar = reader.Read();
             }
@@ -232,7 +249,11 @@ namespace MSerra.Net
                 {
                     currentChar = reader.Read();
                     if ((currentChar < '0' || currentChar > '9') && currentChar != '.') break;
-                    if (currentChar == '.' && hadPoint) return SetError("JSON number is malformed");
+                    if (currentChar == '.' && hadPoint)
+                    {
+                        SetError("JSON number is malformed");
+                        return;
+                    }
                     if (currentChar == '.' && !hadPoint) hadPoint = true;
                     stringBuffer[count++] = currentChar == '.' ? ',' : (char)currentChar;
                 }
@@ -247,7 +268,7 @@ namespace MSerra.Net
                 var l = reader.Read();
                 var ll = (currentChar = reader.Read());
                 noRead = !(u == 'u' && l == 'l' && ll == 'l');
-                if (!noRead) currentChar = TrimNext(reader);
+                if (!noRead) TrimNext(reader, ref currentChar);
             }
             else if (currentChar == 't')
             {
@@ -257,7 +278,7 @@ namespace MSerra.Net
                 noRead = !(r == 'r' && u == 'u' && e == 'e');
                 if (!noRead)
                 {
-                    currentChar = TrimNext(reader);
+                    TrimNext(reader, ref currentChar);
                     value = true;
                 }
             }
@@ -270,30 +291,25 @@ namespace MSerra.Net
                 noRead = !(a == 'a' && l == 'l' && s == 's' && e == 'e');
                 if (!noRead)
                 {
-                    currentChar = TrimNext(reader);
+                    TrimNext(reader, ref currentChar);
                     value = false;
                 }
             }
 
-            if (!reader.EndOfStream && (currentChar == ' ' || currentChar == '\n' || currentChar == '\r')) currentChar = TrimNext(reader);
-
-            return value;
+            if (!reader.EndOfStream && (currentChar < 34)) TrimNext(reader, ref currentChar);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int TrimNext(StreamReader reader)
+        private void TrimNext(StreamReader reader, ref int currentChar)
         {
-            var c = default(int);
-            while (!reader.EndOfStream && ((c = reader.Read()) == ' ' || c == '\n' || c == '\r')) continue;
-            return c;
+            while (!reader.EndOfStream && (currentChar = reader.Read()) < 34) continue;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public string SetError(string errorMessage)
+        public void SetError(string errorMessage)
         {
             this.error = true;
             this.errorMessage = errorMessage;
-            return errorMessage;
         }
 
         internal struct Context

@@ -1,5 +1,7 @@
 ﻿using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Diagnostics.Windows.Configs;
 using System.IO;
+using System.Linq;
 
 namespace MSerra.Net
 {
@@ -9,18 +11,18 @@ namespace MSerra.Net
         {
             var bench = BenchmarkDotNet.Running.BenchmarkRunner.Run<BenchmarkJsonDeserialization>();
 
-            //var b = new BenchmarkJsonDeserialization();
-            //b.Setup();
+            // var b = new BenchmarkJsonDeserialization();
+            // b.Setup();
 
-            //b.JsonMaxParser();
-            //b.NewtonsoftJson();
-            //b.SystemTextJson();
+            // b.JsonMaxParser();
+            // b.NewtonsoftJson();
+            // b.SystemTextJson();
 
         }
     }
 
     [MemoryDiagnoser]
-    //[InliningDiagnoser]
+    [InliningDiagnoser]
     public class BenchmarkJsonDeserialization
     {
         private Newtonsoft.Json.JsonReader jsonReader;
@@ -30,10 +32,12 @@ namespace MSerra.Net
         [IterationSetup]
         public void Setup()
         {
-            var json = File.ReadAllText(@"C:\git\jsonmaxparser\random.json");
+            var filepath = @"C:\git\jsonmaxparser\random.json";
+
+            var json = File.ReadAllText(filepath);
 
             // JsonMaxParser setup
-            var s = File.OpenRead(@"C:\git\jsonmaxparser\random.json");
+            var s = File.OpenRead(filepath);
             streamReader = new StreamReader(s);
 
             //Newtonsoft setup
@@ -41,7 +45,7 @@ namespace MSerra.Net
             jsonReader = new Newtonsoft.Json.JsonTextReader(tr);
 
             // SystemTextJson setup
-            stream = File.OpenRead(@"C:\git\jsonmaxparser\random.json");
+            stream = File.OpenRead(filepath);
         }
 
         [Benchmark]
