@@ -206,7 +206,13 @@ namespace MSerra.Net
                 SetError("Malformed JSON field, missing ':'.");
                 return;
             }
-            propertyName = new string(new ReadOnlySpan<char>(stringBuffer, 0, count));
+            propertyName = string.Create(count, stringBuffer, (buffer, value) =>
+            {
+                for (int i = buffer.Length - 1; i >= 0; i--)
+                {
+                    buffer[i] = value[i];
+                }
+            });
         }
 
         // We expect to encounter a field (i.e. starting with ' or ")
@@ -230,7 +236,13 @@ namespace MSerra.Net
                     if (currentChar == stringDelimiter && (previousChar != '\\' || previousPreviousChar == '\\')) break;
                     stringBuffer[count++] = (char)currentChar;
                 }
-                value = new string(new ReadOnlySpan<char>(stringBuffer, 0, count));
+                value = string.Create(count, stringBuffer, (buffer, value) =>
+                {
+                    for (int i = buffer.Length - 1; i >= 0; i--)
+                    {
+                        buffer[i] = value[i];
+                    }
+                });
                 if (currentChar != stringDelimiter)
                 {
                     SetError($"Malformed string : [{value.ToString()}]");
@@ -257,7 +269,13 @@ namespace MSerra.Net
                     if (currentChar == '.' && !hadPoint) hadPoint = true;
                     stringBuffer[count++] = currentChar == '.' ? ',' : (char)currentChar;
                 }
-                var s = new string(new ReadOnlySpan<char>(stringBuffer, 0, count));
+                var s = string.Create(count, stringBuffer, (buffer, value) =>
+                {
+                    for (int i = buffer.Length - 1; i >= 0; i--)
+                    {
+                        buffer[i] = value[i];
+                    }
+                });
                 value = s;
                 if (options.ParseNumber) value = hadPoint ? double.Parse(s) : int.Parse(s);
                 noRead = false;
